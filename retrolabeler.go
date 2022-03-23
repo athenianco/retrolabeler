@@ -304,14 +304,13 @@ func LoadPullRequests(repo, since, token string) ([]PullRequest, error) {
 			bar = progressbar.Default(int64(query.Search.IssueCount))
 		}
 		_ = bar.Add(len(query.Search.Nodes))
-		if len(query.Search.Nodes) == 0 {
-			break
-		}
+		hasNew := false
 		for _, node := range query.Search.Nodes {
 			if _, exists := fetchedIds[node.PullRequest.Id]; exists {
 				_ = bar.Add(-1)
 				continue
 			}
+			hasNew = true
 			fetchedIds[node.PullRequest.Id] = struct{}{}
 			var paths []string
 			labels := map[string]struct{}{}
@@ -322,6 +321,9 @@ func LoadPullRequests(repo, since, token string) ([]PullRequest, error) {
 				labels[label.Name] = struct{}{}
 			}
 			prs = append(prs, PullRequest{Id: node.PullRequest.Id, Paths: paths, Labels: labels})
+		}
+		if !hasNew {
+			break
 		}
 		createdUntil = query.Search.Nodes[len(query.Search.Nodes)-1].PullRequest.CreatedAt.Format("2006-01-02")
 		bar.Describe(fmt.Sprintf("✔ since %v [%d]", createdUntil, query.RateLimit.Remaining))
