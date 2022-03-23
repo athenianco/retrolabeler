@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gobwas/glob"
@@ -43,6 +47,32 @@ func parseGlobArray(vals []string, label string) (globs []glob.Glob, err error) 
 		globs = append(globs, globby)
 	}
 	return
+}
+
+func Initialize() (string, string, int, bool, bool, error) {
+	var workers uint
+	var createMissingLabels, dryRun bool
+	flag.UintVar(&workers, "j", 4, "Number of parallel workers to label PRs.")
+	flag.BoolVar(&createMissingLabels, "c", false, "Create the missing labels.")
+	flag.BoolVar(&dryRun, "dry-run", false, "Execute all the steps except the actual labeling.")
+	flag.Parse()
+	_, err := os.Stdin.Stat()
+	token := os.Getenv("GITHUB_TOKEN")
+	if len(flag.Args()) != 1 || err != nil || token == "" {
+		log.Error().Msg("Usage: cat labeler.yml | GITHUB_TOKEN=... retrolabeler your/repository")
+		if err == nil {
+			err = errors.New("len(os.Args) != 2 || token == \"\"")
+		}
+		return "", "", 0, false, false, err
+	}
+	if workers == 0 {
+		log.Error().Msg("-j value must be positive")
+		return "", "", 0, false, false, errors.New("-j value must be positive")
+	}
+	if dryRun {
+		log.Warn().Msg("Dry run mode: will not label PRs")
+	}
+	return flag.Args()[0], token, int(workers), createMissingLabels, dryRun, nil
 }
 
 func ParseLabelerConfig() ([]Label, error) {
@@ -89,14 +119,24 @@ func ParseLabelerConfig() ([]Label, error) {
 	return labels, err
 }
 
+type LabelPreviewWrapper struct {
+	Transport http.RoundTripper
+}
+
+func (w LabelPreviewWrapper) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.Header.Set("Accept", "application/vnd.github.bane-preview+json")
+	return w.Transport.RoundTrip(req)
+}
+
 func makeGraphQLClient(token string) *githubv4.Client {
 	httpClient := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: token},
 	))
+	httpClient.Transport = LabelPreviewWrapper{httpClient.Transport}
 	return githubv4.NewClient(httpClient)
 }
 
-func LoadLabels(repo, token string) (map[string]string, error) {
+func LoadLabels(repo, token string) (string, map[string]string, error) {
 	client := makeGraphQLClient(token)
 	var query struct {
 		Repository struct {
@@ -122,8 +162,8 @@ func LoadLabels(repo, token string) (map[string]string, error) {
 	for {
 		err := client.Query(context.Background(), &query, variables)
 		if err != nil {
-			log.Error().Msgf("Failed to fetch pull requests from GitHub: %v", err)
-			return nil, err
+			log.Error().Msgf("Failed to fetch labels from GitHub: %v", err)
+			return "", nil, err
 		}
 		for _, node := range query.Repository.Labels.Nodes {
 			labelMap[node.Name] = node.Id
@@ -133,17 +173,65 @@ func LoadLabels(repo, token string) (map[string]string, error) {
 		}
 		variables["cursor"] = githubv4.NewString(query.Repository.Labels.PageInfo.EndCursor)
 	}
-	return labelMap, nil
+	return query.Repository.Id, labelMap, nil
 }
 
-func CheckLabels(labels []Label, labelMap map[string]string) bool {
+func CheckLabels(labels []Label, labelMap map[string]string, createMissingLabels bool) []string {
+	var missingLabels []string
 	for _, label := range labels {
 		if _, exists := labelMap[label.Name]; !exists {
-			log.Error().Msgf("Label %v does not exist in the repository", label.Name)
-			return false
+			missingLabels = append(missingLabels, label.Name)
 		}
 	}
-	return true
+	if len(missingLabels) > 0 {
+		var event *zerolog.Event
+		if createMissingLabels {
+			event = log.Warn()
+		} else {
+			event = log.Error()
+		}
+		event.Msgf("%d labels do not exist in the repository: %v",
+			len(missingLabels), strings.Join(missingLabels, ", "))
+	}
+	return missingLabels
+}
+
+type CreateLabelInput struct {
+	Name         githubv4.String `json:"name"`
+	Color        githubv4.String `json:"color"`
+	RepositoryId githubv4.ID     `json:"repositoryId"`
+}
+
+func CreateLabels(repoId string, labels []string, labelMap map[string]string, token string) error {
+	log.Info().Msgf("Creating %d labels", len(labels))
+	bar := progressbar.Default(int64(len(labels)))
+	client := makeGraphQLClient(token)
+	var mutation struct {
+		CreateLabel struct {
+			ClientMutationID string
+			Label            struct {
+				Id string
+			}
+		} `graphql:"createLabel(input: $input)"`
+	}
+	var failed bool
+	for _, label := range labels {
+		input := CreateLabelInput{
+			Name:         githubv4.String(label),
+			Color:        githubv4.String("cccccc"),
+			RepositoryId: githubv4.ID(repoId),
+		}
+		if err := client.Mutate(context.Background(), &mutation, input, nil); err != nil {
+			log.Error().Msgf("Failed to create label %v: %v", label, err)
+			failed = true
+		}
+		labelMap[label] = mutation.CreateLabel.Label.Id
+		_ = bar.Add(1)
+	}
+	if failed {
+		return errors.New("failed to create missing labels")
+	}
+	return nil
 }
 
 type PullRequest struct {
@@ -153,17 +241,20 @@ type PullRequest struct {
 }
 
 func LoadPullRequests(repo, token string) ([]PullRequest, error) {
+	var bar *progressbar.ProgressBar
 	client := makeGraphQLClient(token)
 	var query struct {
 		Search struct {
-			PageInfo struct {
+			IssueCount int
+			PageInfo   struct {
 				HasNextPage bool
 				EndCursor   githubv4.String
 			}
 			Nodes []struct {
 				PullRequest struct {
-					Id    string
-					Files struct {
+					Id        string
+					CreatedAt string
+					Files     struct {
 						Nodes []struct {
 							Path string
 						}
@@ -177,17 +268,35 @@ func LoadPullRequests(repo, token string) ([]PullRequest, error) {
 			}
 		} `graphql:"search(first: 100, after: $cursor, query: $query, type: ISSUE)"`
 	}
-	variables := map[string]interface{}{
-		"query": githubv4.String(fmt.Sprintf("repo:%s is:pr created:>%s",
-			repo, time.Now().AddDate(-1, -1, 0).Format("2006-01-02"))),
-		"cursor": (*githubv4.String)(nil),
+	createdUntil := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
+	setVariables := func() map[string]interface{} {
+		return map[string]interface{}{
+			"query": githubv4.String(fmt.Sprintf("repo:%s is:pr created:>%s created:<%s sort:created-desc",
+				repo, time.Now().AddDate(-1, -1, 0).Format("2006-01-02"), createdUntil)),
+			"cursor": (*githubv4.String)(nil),
+		}
 	}
+	variables := setVariables()
 	var prs []PullRequest
+	attempts := 10
 	for {
-		err := client.Query(context.Background(), &query, variables)
+		var err error
+		for attempt := 1; attempt <= attempts; attempt++ {
+			err = client.Query(context.Background(), &query, variables)
+			if err != nil {
+				log.Error().Msgf("[%d/%d] Failed to fetch pull requests from GitHub: %v",
+					attempt, attempts, err)
+			}
+		}
 		if err != nil {
-			log.Error().Msgf("Failed to fetch pull requests from GitHub: %v", err)
 			return nil, err
+		}
+		if bar == nil {
+			bar = progressbar.Default(int64(query.Search.IssueCount))
+		}
+		_ = bar.Add(len(query.Search.Nodes))
+		if len(query.Search.Nodes) == 0 {
+			break
 		}
 		for _, node := range query.Search.Nodes {
 			var paths []string
@@ -200,10 +309,13 @@ func LoadPullRequests(repo, token string) ([]PullRequest, error) {
 			}
 			prs = append(prs, PullRequest{Id: node.PullRequest.Id, Paths: paths, Labels: labels})
 		}
+		createdUntil = query.Search.Nodes[len(query.Search.Nodes)-1].PullRequest.CreatedAt
+		bar.Describe(fmt.Sprintf("✔ since %v", createdUntil))
 		if !query.Search.PageInfo.HasNextPage {
-			break
+			variables = setVariables()
+		} else {
+			variables["cursor"] = githubv4.NewString(query.Search.PageInfo.EndCursor)
 		}
-		variables["cursor"] = githubv4.NewString(query.Search.PageInfo.EndCursor)
 	}
 	return prs, nil
 }
@@ -259,38 +371,55 @@ func ComputeUpdates(prs []PullRequest, rules []Label, labelMap map[string]string
 	return updates
 }
 
-func ApplyUpdates(updates []Update, token string) error {
-	client := makeGraphQLClient(token)
-	var mutation struct {
-		AddLabelsToLabelable struct {
-			ClientMutationID string
-		} `graphql:"addLabelsToLabelable(input: $input)"`
-	}
-	bar := progressbar.Default(int64(len(updates)))
+func PrintUpdates(updates []Update) {
 	for _, update := range updates {
-		labelIds := make([]githubv4.ID, len(update.Labels))
-		for i, label := range update.Labels {
-			labelIds[i] = label
-		}
-		input := githubv4.AddLabelsToLabelableInput{
-			LabelableID: update.Id,
-			LabelIDs:    labelIds,
-		}
-		if err := client.Mutate(context.Background(), &mutation, input, nil); err != nil {
-			log.Error().Msgf("Failed to label PR %v: %v", update.Id, err)
-		}
-		_ = bar.Add(1)
+		_ = fmt.Sprintf("%s [%s]\n", update.Id, strings.Join(update.Labels, ", "))
 	}
+}
+
+func ApplyUpdates(updates []Update, token string, workers int) error {
+	bar := progressbar.Default(int64(len(updates)))
+	tasks := make(chan Update, len(updates))
+	for _, update := range updates {
+		tasks <- update
+	}
+	close(tasks)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			client := makeGraphQLClient(token)
+			var mutation struct {
+				AddLabelsToLabelable struct {
+					ClientMutationID string
+				} `graphql:"addLabelsToLabelable(input: $input)"`
+			}
+			for update := range tasks {
+				labelIds := make([]githubv4.ID, len(update.Labels))
+				for i, label := range update.Labels {
+					labelIds[i] = label
+				}
+				input := githubv4.AddLabelsToLabelableInput{
+					LabelableID: update.Id,
+					LabelIDs:    labelIds,
+				}
+				if err := client.Mutate(context.Background(), &mutation, input, nil); err != nil {
+					log.Error().Msgf("Failed to label PR %v: %v", update.Id, err)
+				}
+				_ = bar.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
 	return nil
 }
 
 func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 	log.Info().Msg("Initializing")
-	_, err := os.Stdin.Stat()
-	token := os.Getenv("GITHUB_TOKEN")
-	if len(os.Args) != 2 || err != nil || token == "" {
-		log.Error().Msg("Usage: cat labeler.yml | GITHUB_TOKEN=... retrolabeler your/repository")
+	repo, token, workers, createMissingLabels, dryRun, err := Initialize()
+	if err != nil {
 		os.Exit(1)
 	}
 	log.Info().Msg("Reading labeler.yml from stdin")
@@ -299,15 +428,21 @@ func main() {
 		os.Exit(2)
 	}
 	log.Info().Msgf("Parsed %d labels", len(labels))
-	repo := os.Args[1]
 	log.Info().Msg("Resolving labels")
-	labelMap, err := LoadLabels(repo, token)
+	repoId, labelMap, err := LoadLabels(repo, token)
 	if err != nil {
 		os.Exit(3)
 	}
 	log.Info().Msgf("Loaded %d labels", len(labelMap))
-	if !CheckLabels(labels, labelMap) {
-		os.Exit(4)
+	missingLabels := CheckLabels(labels, labelMap, createMissingLabels || dryRun)
+	if len(missingLabels) > 0 {
+		if dryRun {
+			for _, label := range missingLabels {
+				labelMap[label] = label
+			}
+		} else if !createMissingLabels || CreateLabels(repoId, missingLabels, labelMap, token) != nil {
+			os.Exit(4)
+		}
 	}
 	log.Info().Msgf("Discovering PRs in %v", repo)
 	prs, err := LoadPullRequests(repo, token)
@@ -320,8 +455,12 @@ func main() {
 	if len(updates) == 0 {
 		return
 	}
-	log.Info().Msgf("Labeling the pull requests")
-	err = ApplyUpdates(updates, token)
+	if dryRun {
+		PrintUpdates(updates)
+		return
+	}
+	log.Info().Msgf("Labeling the pull requests in %d parallel workers", workers)
+	err = ApplyUpdates(updates, token, workers)
 	if err != nil {
 		os.Exit(6)
 	}

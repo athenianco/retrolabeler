@@ -12,7 +12,7 @@ go get github.com/athenianco/retrolabeler/cmd/retrolabeler
 
 ```
 export GITHUB_TOKEN=...
-cat .github/labeler.yml | retrolabeler owner/reponame
+cat .github/labeler.yml | retrolabeler -c owner/reponame
 ```
 
 ## License
