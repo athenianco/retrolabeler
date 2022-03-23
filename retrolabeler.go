@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"strings"
 	"time"
@@ -47,13 +46,10 @@ func parseGlobArray(vals []string, label string) (globs []glob.Glob, err error) 
 }
 
 func ParseLabelerConfig() ([]Label, error) {
-	configBytes, err := ioutil.ReadAll(os.Stdin)
-	if err != nil {
-		log.Fatal().Msgf("Failed to read from stdin: %v", err)
-		return nil, err
-	}
 	var labelNodes map[string]yaml.Node
-	if err = yaml.Unmarshal(configBytes, &labelNodes); err != nil {
+	var err error
+	if err = yaml.NewDecoder(os.Stdin).Decode(&labelNodes); err != nil {
+		log.Error().Msgf("Failed to read from stdin: %v", err)
 		return nil, err
 	}
 	var labels []Label
@@ -126,7 +122,7 @@ func LoadLabels(repo, token string) (map[string]string, error) {
 	for {
 		err := client.Query(context.Background(), &query, variables)
 		if err != nil {
-			log.Fatal().Msgf("Failed to fetch pull requests from GitHub: %v", err)
+			log.Error().Msgf("Failed to fetch pull requests from GitHub: %v", err)
 			return nil, err
 		}
 		for _, node := range query.Repository.Labels.Nodes {
@@ -143,7 +139,7 @@ func LoadLabels(repo, token string) (map[string]string, error) {
 func CheckLabels(labels []Label, labelMap map[string]string) bool {
 	for _, label := range labels {
 		if _, exists := labelMap[label.Name]; !exists {
-			log.Fatal().Msgf("Label %v does not exist in the repository", label.Name)
+			log.Error().Msgf("Label %v does not exist in the repository", label.Name)
 			return false
 		}
 	}
@@ -190,7 +186,7 @@ func LoadPullRequests(repo, token string) ([]PullRequest, error) {
 	for {
 		err := client.Query(context.Background(), &query, variables)
 		if err != nil {
-			log.Fatal().Msgf("Failed to fetch pull requests from GitHub: %v", err)
+			log.Error().Msgf("Failed to fetch pull requests from GitHub: %v", err)
 			return nil, err
 		}
 		for _, node := range query.Search.Nodes {
@@ -294,7 +290,7 @@ func main() {
 	_, err := os.Stdin.Stat()
 	token := os.Getenv("GITHUB_TOKEN")
 	if len(os.Args) != 2 || err != nil || token == "" {
-		log.Fatal().Msg("Usage: cat labeler.yml | GITHUB_TOKEN=... retrolabeler your/repository")
+		log.Error().Msg("Usage: cat labeler.yml | GITHUB_TOKEN=... retrolabeler your/repository")
 		os.Exit(1)
 	}
 	log.Info().Msg("Reading labeler.yml from stdin")

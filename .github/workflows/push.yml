@@ -1,0 +1,78 @@
+name: Push
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+jobs:
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v1
+      - name: Semgrep
+        id: semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: p/ci
+  go-vet:
+    name: Go vet
+    runs-on: ubuntu-20.04
+    steps:
+      - name: actions/checkout
+        uses: actions/checkout@v2
+      - name: actions/cache
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/go
+            ~/.cache/go-build
+          key: ${{ env.GO_CACHE_PREFIX }}-go-vet-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ env.GO_CACHE_PREFIX }}-go-vet-
+            ${{ env.GO_CACHE_PREFIX }}-
+      - name: vet
+        run: go vet ./...
+  static-check:
+    name: Static check
+    runs-on: ubuntu-20.04
+    steps:
+      - name: actions/checkout
+        uses: actions/checkout@v2
+      - name: actions/cache
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/go
+            ~/.cache/go-build
+          key: ${{ env.GO_CACHE_PREFIX }}-static-check-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ env.GO_CACHE_PREFIX }}-static-check-
+            ${{ env.GO_CACHE_PREFIX }}-
+      - name: install staticcheck
+        run: |
+          wget https://github.com/dominikh/go-tools/releases/download/2020.1.6/staticcheck_linux_amd64.tar.gz
+          tar -xf staticcheck_linux_amd64.tar.gz
+      - name: gofmt
+        run: test -z "$(gofmt -s -l . | grep -v vendor/)"
+      - name: staticcheck
+        run: staticcheck/staticcheck
+  gitleaks:
+    name: Gitleaks
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v1
+      - name: gitleaks-action
+        uses: zricethezav/gitleaks-action@master
+  meta-linters:
+    name: Static checks
+    runs-on: ubuntu-20.04
+    needs:
+      - semgrep
+      - go-vet
+      - static-check
+      - gitleaks
+    steps:
+      - run: echo "ok"
