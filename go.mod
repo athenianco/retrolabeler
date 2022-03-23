@@ -1,6 +1,6 @@
 module github.com/athenianco/retrolabeler
 
-go 1.18
+go 1.17
 
 require (
 	github.com/gobwas/glob v0.2.3
