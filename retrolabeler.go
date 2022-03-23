@@ -49,11 +49,14 @@ func parseGlobArray(vals []string, label string) (globs []glob.Glob, err error) 
 	return
 }
 
-func Initialize() (string, string, int, bool, bool, error) {
+func Initialize() (string, string, string, int, bool, bool, error) {
 	var workers uint
 	var createMissingLabels, dryRun bool
+	var since string
 	flag.UintVar(&workers, "j", 4, "Number of parallel workers to label PRs.")
 	flag.BoolVar(&createMissingLabels, "c", false, "Create the missing labels.")
+	flag.StringVar(&since, "s", time.Now().AddDate(-1, -3, 0).Format("2006-01-02"),
+		"Search for PRs created after this date.")
 	flag.BoolVar(&dryRun, "dry-run", false, "Execute all the steps except the actual labeling.")
 	flag.Parse()
 	_, err := os.Stdin.Stat()
@@ -63,16 +66,16 @@ func Initialize() (string, string, int, bool, bool, error) {
 		if err == nil {
 			err = errors.New("len(os.Args) != 2 || token == \"\"")
 		}
-		return "", "", 0, false, false, err
+		return "", "", "", 0, false, false, err
 	}
 	if workers == 0 {
 		log.Error().Msg("-j value must be positive")
-		return "", "", 0, false, false, errors.New("-j value must be positive")
+		return "", "", "", 0, false, false, errors.New("-j value must be positive")
 	}
 	if dryRun {
 		log.Warn().Msg("Dry run mode: will not label PRs")
 	}
-	return flag.Args()[0], token, int(workers), createMissingLabels, dryRun, nil
+	return flag.Args()[0], since, token, int(workers), createMissingLabels, dryRun, nil
 }
 
 func ParseLabelerConfig() ([]Label, error) {
@@ -240,7 +243,7 @@ type PullRequest struct {
 	Labels map[string]struct{}
 }
 
-func LoadPullRequests(repo, token string) ([]PullRequest, error) {
+func LoadPullRequests(repo, since, token string) ([]PullRequest, error) {
 	var bar *progressbar.ProgressBar
 	client := makeGraphQLClient(token)
 	var query struct {
@@ -249,6 +252,11 @@ func LoadPullRequests(repo, token string) ([]PullRequest, error) {
 			PageInfo   struct {
 				HasNextPage bool
 				EndCursor   githubv4.String
+			}
+			RateLimit struct {
+				Cost      int
+				Remaining int
+				ResetAt   int64
 			}
 			Nodes []struct {
 				PullRequest struct {
@@ -272,7 +280,7 @@ func LoadPullRequests(repo, token string) ([]PullRequest, error) {
 	setVariables := func() map[string]interface{} {
 		return map[string]interface{}{
 			"query": githubv4.String(fmt.Sprintf("repo:%s is:pr created:>%s created:<%s sort:created-desc",
-				repo, time.Now().AddDate(-1, -1, 0).Format("2006-01-02"), createdUntil)),
+				repo, since, createdUntil)),
 			"cursor": (*githubv4.String)(nil),
 		}
 	}
@@ -311,6 +319,11 @@ func LoadPullRequests(repo, token string) ([]PullRequest, error) {
 		}
 		createdUntil = query.Search.Nodes[len(query.Search.Nodes)-1].PullRequest.CreatedAt
 		bar.Describe(fmt.Sprintf("✔ since %v", createdUntil))
+		if query.Search.RateLimit.Remaining < query.Search.RateLimit.Cost {
+			until := time.Unix(query.Search.RateLimit.ResetAt, 0)
+			log.Warn().Msgf("Hit the rate limit, sleeping until %v", until.Format(time.RFC3339))
+			time.Sleep(time.Until(until))
+		}
 		if !query.Search.PageInfo.HasNextPage {
 			variables = setVariables()
 		} else {
@@ -418,7 +431,7 @@ func ApplyUpdates(updates []Update, token string, workers int) error {
 func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 	log.Info().Msg("Initializing")
-	repo, token, workers, createMissingLabels, dryRun, err := Initialize()
+	repo, since, token, workers, createMissingLabels, dryRun, err := Initialize()
 	if err != nil {
 		os.Exit(1)
 	}
@@ -445,7 +458,7 @@ func main() {
 		}
 	}
 	log.Info().Msgf("Discovering PRs in %v", repo)
-	prs, err := LoadPullRequests(repo, token)
+	prs, err := LoadPullRequests(repo, since, token)
 	if err != nil {
 		os.Exit(5)
 	}
