@@ -247,21 +247,21 @@ func LoadPullRequests(repo, since, token string) ([]PullRequest, error) {
 	var bar *progressbar.ProgressBar
 	client := makeGraphQLClient(token)
 	var query struct {
+		RateLimit struct {
+			Cost      int
+			Remaining int
+			ResetAt   githubv4.DateTime
+		}
 		Search struct {
 			IssueCount int
 			PageInfo   struct {
 				HasNextPage bool
 				EndCursor   githubv4.String
 			}
-			RateLimit struct {
-				Cost      int
-				Remaining int
-				ResetAt   int64
-			}
 			Nodes []struct {
 				PullRequest struct {
 					Id        string
-					CreatedAt string
+					CreatedAt githubv4.DateTime
 					Files     struct {
 						Nodes []struct {
 							Path string
@@ -279,13 +279,14 @@ func LoadPullRequests(repo, since, token string) ([]PullRequest, error) {
 	createdUntil := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
 	setVariables := func() map[string]interface{} {
 		return map[string]interface{}{
-			"query": githubv4.String(fmt.Sprintf("repo:%s is:pr created:>%s created:<%s sort:created-desc",
+			"query": githubv4.String(fmt.Sprintf("repo:%s is:pr created:%s..%s sort:created-desc",
 				repo, since, createdUntil)),
 			"cursor": (*githubv4.String)(nil),
 		}
 	}
 	variables := setVariables()
 	var prs []PullRequest
+	fetchedIds := map[string]struct{}{}
 	attempts := 10
 	for {
 		var err error
@@ -307,6 +308,11 @@ func LoadPullRequests(repo, since, token string) ([]PullRequest, error) {
 			break
 		}
 		for _, node := range query.Search.Nodes {
+			if _, exists := fetchedIds[node.PullRequest.Id]; exists {
+				_ = bar.Add(-1)
+				continue
+			}
+			fetchedIds[node.PullRequest.Id] = struct{}{}
 			var paths []string
 			labels := map[string]struct{}{}
 			for _, file := range node.PullRequest.Files.Nodes {
@@ -317,12 +323,12 @@ func LoadPullRequests(repo, since, token string) ([]PullRequest, error) {
 			}
 			prs = append(prs, PullRequest{Id: node.PullRequest.Id, Paths: paths, Labels: labels})
 		}
-		createdUntil = query.Search.Nodes[len(query.Search.Nodes)-1].PullRequest.CreatedAt
-		bar.Describe(fmt.Sprintf("✔ since %v", createdUntil))
-		if query.Search.RateLimit.Remaining < query.Search.RateLimit.Cost {
-			until := time.Unix(query.Search.RateLimit.ResetAt, 0)
-			log.Warn().Msgf("Hit the rate limit, sleeping until %v", until.Format(time.RFC3339))
-			time.Sleep(time.Until(until))
+		createdUntil = query.Search.Nodes[len(query.Search.Nodes)-1].PullRequest.CreatedAt.Format("2006-01-02")
+		bar.Describe(fmt.Sprintf("✔ since %v [%d]", createdUntil, query.RateLimit.Remaining))
+		if query.RateLimit.Remaining < query.RateLimit.Cost {
+			log.Warn().Msgf("Hit the rate limit, sleeping until %v",
+				query.RateLimit.ResetAt.Format(time.RFC3339))
+			time.Sleep(time.Until(query.RateLimit.ResetAt.Time))
 		}
 		if !query.Search.PageInfo.HasNextPage {
 			variables = setVariables()
