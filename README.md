@@ -5,7 +5,7 @@ The tool to label existing PRs in a GitHub repository according to the rules in 
 ## Installation
 
 ```
-go get github.com/athenianco/retrolabeler/cmd/retrolabeler
+GOBIN=$(pwd) go install github.com/athenianco/retrolabeler@latest
 ```
 
 ## Usage
