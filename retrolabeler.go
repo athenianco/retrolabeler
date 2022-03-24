@@ -295,6 +295,8 @@ func LoadPullRequests(repo, since, token string) ([]PullRequest, error) {
 			if err != nil {
 				log.Error().Msgf("[%d/%d] Failed to fetch pull requests from GitHub: %v",
 					attempt, attempts, err)
+			} else {
+				break
 			}
 		}
 		if err != nil {
@@ -416,7 +418,7 @@ func ApplyUpdates(updates []Update, token string, workers int, dryRun bool) erro
 		for len(tasks) > 0 {
 			if err := client.Query(context.Background(), &query, nil); err == nil {
 				bar.Describe(fmt.Sprintf("[%d]", query.RateLimit.Remaining))
-				if query.RateLimit.Remaining < 10*workers {
+				if query.RateLimit.Remaining < 50 {
 					log.Warn().Msgf("Approached the rate limit, sleeping until %v",
 						query.RateLimit.ResetAt.Format(time.RFC3339))
 					rateLimitRecoverLock.Lock()
@@ -429,6 +431,7 @@ func ApplyUpdates(updates []Update, token string, workers int, dryRun bool) erro
 
 	var secondaryTasks []Update
 	var secondaryLock sync.Mutex
+	attempts := 10
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func() {
@@ -465,7 +468,15 @@ func ApplyUpdates(updates []Update, token string, workers int, dryRun bool) erro
 					}
 					err = client.Query(context.Background(), &dryRunQuery, variables)
 				} else {
-					err = client.Mutate(context.Background(), &mutation, input, nil)
+					for attempt := 1; attempt <= attempts; attempt++ {
+						err = client.Mutate(context.Background(), &mutation, input, nil)
+						if err != nil {
+							log.Error().Msgf("[%d/%d] Failed to label pull request %v: %v",
+								attempt, attempts, update.Id, err)
+						} else {
+							break
+						}
+					}
 				}
 				if err != nil {
 					if strings.Contains(err.Error(), "secondary rate limit") {
