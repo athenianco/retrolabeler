@@ -327,7 +327,7 @@ func LoadPullRequests(repo, since, token string) ([]PullRequest, error) {
 		}
 		createdUntil = query.Search.Nodes[len(query.Search.Nodes)-1].PullRequest.CreatedAt.Format("2006-01-02")
 		bar.Describe(fmt.Sprintf("✔ since %v [%d]", createdUntil, query.RateLimit.Remaining))
-		if query.RateLimit.Remaining < query.RateLimit.Cost {
+		if query.RateLimit.Remaining < query.RateLimit.Cost*2 {
 			log.Warn().Msgf("Hit the rate limit, sleeping until %v",
 				query.RateLimit.ResetAt.Format(time.RFC3339))
 			time.Sleep(time.Until(query.RateLimit.ResetAt.Time))
