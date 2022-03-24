@@ -10,7 +10,7 @@ The tool bases on v4 GraphQL API and has these features:
 - Create the labels mentioned in YAML but not present in the repository on the fly (`-c`).
 - Specify the date since which to label PRs (`-s`).
 - Dry run mode: execute everything but the actual mutations - label creation and PR labeling (`-dry-run`).
-- Fast PR labeling in multiple parallel workers (`-j`, 4 by default).
+- Fast PR labeling in multiple parallel workers (`-j`, 2 by default).
 
 ## Installation
 
