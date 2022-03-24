@@ -53,7 +53,7 @@ func Initialize() (string, string, string, int, bool, bool, error) {
 	var workers uint
 	var createMissingLabels, dryRun bool
 	var since string
-	flag.UintVar(&workers, "j", 4, "Number of parallel workers to label PRs.")
+	flag.UintVar(&workers, "j", 2, "Number of parallel workers to label PRs.")
 	flag.BoolVar(&createMissingLabels, "c", false, "Create the missing labels.")
 	flag.StringVar(&since, "s", time.Now().AddDate(-1, -3, 0).Format("2006-01-02"),
 		"Search for PRs created after this date.")
@@ -327,8 +327,8 @@ func LoadPullRequests(repo, since, token string) ([]PullRequest, error) {
 		}
 		createdUntil = query.Search.Nodes[len(query.Search.Nodes)-1].PullRequest.CreatedAt.Format("2006-01-02")
 		bar.Describe(fmt.Sprintf("✔ since %v [%d]", createdUntil, query.RateLimit.Remaining))
-		if query.RateLimit.Remaining < query.RateLimit.Cost*2 {
-			log.Warn().Msgf("Hit the rate limit, sleeping until %v",
+		if query.RateLimit.Remaining < query.RateLimit.Cost*10 {
+			log.Warn().Msgf("Approached the rate limit, sleeping until %v",
 				query.RateLimit.ResetAt.Format(time.RFC3339))
 			time.Sleep(time.Until(query.RateLimit.ResetAt.Time))
 		}
@@ -392,29 +392,62 @@ func ComputeUpdates(prs []PullRequest, rules []Label, labelMap map[string]string
 	return updates
 }
 
-func PrintUpdates(updates []Update) {
-	for _, update := range updates {
-		_ = fmt.Sprintf("%s [%s]\n", update.Id, strings.Join(update.Labels, ", "))
-	}
-}
-
-func ApplyUpdates(updates []Update, token string, workers int) error {
+func ApplyUpdates(updates []Update, token string, workers int, dryRun bool) error {
 	bar := progressbar.Default(int64(len(updates)))
 	tasks := make(chan Update, len(updates))
 	for _, update := range updates {
 		tasks <- update
 	}
 	close(tasks)
+	var rateLimitRecoverLock sync.Mutex
 	var wg sync.WaitGroup
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		client := makeGraphQLClient(token)
+		var query struct {
+			RateLimit struct {
+				Cost      int
+				Remaining int
+				ResetAt   githubv4.DateTime
+			}
+		}
+		for len(tasks) > 0 {
+			if err := client.Query(context.Background(), &query, nil); err == nil {
+				bar.Describe(fmt.Sprintf("[%d]", query.RateLimit.Remaining))
+				if query.RateLimit.Remaining < 10*workers {
+					log.Warn().Msgf("Approached the rate limit, sleeping until %v",
+						query.RateLimit.ResetAt.Format(time.RFC3339))
+					rateLimitRecoverLock.Lock()
+					time.Sleep(time.Until(query.RateLimit.ResetAt.Time))
+					rateLimitRecoverLock.Unlock()
+				}
+			}
+		}
+	}()
+
+	var secondaryTasks []Update
+	var secondaryLock sync.Mutex
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			client := makeGraphQLClient(token)
 			var mutation struct {
+				RateLimit struct {
+					Cost      int
+					Remaining int
+					ResetAt   githubv4.DateTime
+				}
 				AddLabelsToLabelable struct {
 					ClientMutationID string
 				} `graphql:"addLabelsToLabelable(input: $input)"`
+			}
+			var dryRunQuery struct {
+				Node struct {
+					Id string
+				} `graphql:"node(id: $node)"`
 			}
 			for update := range tasks {
 				labelIds := make([]githubv4.ID, len(update.Labels))
@@ -425,14 +458,38 @@ func ApplyUpdates(updates []Update, token string, workers int) error {
 					LabelableID: update.Id,
 					LabelIDs:    labelIds,
 				}
-				if err := client.Mutate(context.Background(), &mutation, input, nil); err != nil {
-					log.Error().Msgf("Failed to label PR %v: %v", update.Id, err)
+				var err error
+				if dryRun {
+					variables := map[string]interface{}{
+						"node": githubv4.ID(update.Id),
+					}
+					err = client.Query(context.Background(), &dryRunQuery, variables)
+				} else {
+					err = client.Mutate(context.Background(), &mutation, input, nil)
+				}
+				if err != nil {
+					if strings.Contains(err.Error(), "secondary rate limit") {
+						secondaryLock.Lock()
+						secondaryTasks = append(secondaryTasks, update)
+						secondaryLock.Unlock()
+						log.Warn().Msg("Sleeping 60s on the secondary rate limit, try a smaller number of workers (-j)")
+						time.Sleep(time.Minute)
+					} else {
+						log.Error().Msgf("Failed to label %v: %v", update.Id, err)
+					}
 				}
 				_ = bar.Add(1)
+				rateLimitRecoverLock.Lock()
+				//lint:ignore SA2001 must wait until the rate limit restores
+				rateLimitRecoverLock.Unlock()
 			}
 		}()
 	}
 	wg.Wait()
+	if len(secondaryTasks) > 0 {
+		log.Info().Msg("Repeating the rate-limited operations")
+		return ApplyUpdates(secondaryTasks, token, workers, dryRun)
+	}
 	return nil
 }
 
@@ -476,12 +533,8 @@ func main() {
 	if len(updates) == 0 {
 		return
 	}
-	if dryRun {
-		PrintUpdates(updates)
-		return
-	}
 	log.Info().Msgf("Labeling the pull requests in %d parallel workers", workers)
-	err = ApplyUpdates(updates, token, workers)
+	err = ApplyUpdates(updates, token, workers, dryRun)
 	if err != nil {
 		os.Exit(6)
 	}
