@@ -208,6 +208,7 @@ type CreateLabelInput struct {
 func CreateLabels(repoId string, labels []string, labelMap map[string]string, token string) error {
 	log.Info().Msgf("Creating %d labels", len(labels))
 	bar := progressbar.Default(int64(len(labels)))
+	defer bar.Finish()
 	client := makeGraphQLClient(token)
 	var mutation struct {
 		CreateLabel struct {
@@ -304,6 +305,7 @@ func LoadPullRequests(repo, since, token string) ([]PullRequest, error) {
 		}
 		if bar == nil {
 			bar = progressbar.Default(int64(query.Search.IssueCount))
+			defer bar.Finish()
 		}
 		_ = bar.Add(len(query.Search.Nodes))
 		hasNew := false
@@ -351,6 +353,7 @@ type Update struct {
 func ComputeUpdates(prs []PullRequest, rules []Label, labelMap map[string]string) []Update {
 	var updates []Update
 	bar := progressbar.Default(int64(len(prs)))
+	defer bar.Finish()
 	for _, pr := range prs {
 		var newLabels []string
 		for _, rule := range rules {
@@ -396,6 +399,7 @@ func ComputeUpdates(prs []PullRequest, rules []Label, labelMap map[string]string
 
 func ApplyUpdates(updates []Update, token string, workers int, dryRun bool) error {
 	bar := progressbar.Default(int64(len(updates)))
+	defer bar.Finish()
 	tasks := make(chan Update, len(updates))
 	for _, update := range updates {
 		tasks <- update
