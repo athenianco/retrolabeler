@@ -11,7 +11,7 @@ def main():
         "iat": now - timedelta(seconds=10),
         "exp": now + timedelta(minutes=9, seconds=50),
         "iss": "49039",
-    }, sys.stdin.read(), algorithm="RS256").decode()
+    }, sys.stdin.read(), algorithm="RS256")
     response = requests.post(
         f"https://api.github.com/app/installations/{sys.argv[1]}/access_tokens",
         headers={
