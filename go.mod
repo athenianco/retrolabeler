@@ -5,7 +5,7 @@ go 1.17
 require (
 	github.com/gobwas/glob v0.2.3
 	github.com/rs/zerolog v1.27.0
-	github.com/schollz/progressbar/v3 v3.8.6
+	github.com/schollz/progressbar/v3 v3.8.7
 	github.com/shurcooL/githubv4 v0.0.0-20220115235240-a14260e6f8a2
 	golang.org/x/oauth2 v0.0.0-20220309155454-6242fa91716a
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b
