@@ -4,7 +4,7 @@ go 1.17
 
 require (
 	github.com/gobwas/glob v0.2.3
-	github.com/rs/zerolog v1.26.1
+	github.com/rs/zerolog v1.27.0
 	github.com/schollz/progressbar/v3 v3.8.6
 	github.com/shurcooL/githubv4 v0.0.0-20220115235240-a14260e6f8a2
 	golang.org/x/oauth2 v0.0.0-20220309155454-6242fa91716a
@@ -13,6 +13,8 @@ require (
 
 require (
 	github.com/golang/protobuf v1.4.2 // indirect
+	github.com/mattn/go-colorable v0.1.12 // indirect
+	github.com/mattn/go-isatty v0.0.14 // indirect
 	github.com/mattn/go-runewidth v0.0.13 // indirect
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
