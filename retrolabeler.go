@@ -32,7 +32,7 @@ type matchObject struct {
 }
 
 func parseGlob(val string, label string) (globby glob.Glob, err error) {
-	if globby, err = glob.Compile(val); err != nil {
+	if globby, err = glob.Compile(val, '/'); err != nil {
 		log.Error().Msgf("Failed to parse glob \"%v\" for label %v, skipped", val, label)
 	}
 	return
