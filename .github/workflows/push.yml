@@ -9,7 +9,7 @@ on:
 jobs:
   semgrep:
     name: Semgrep
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v1
       - name: Semgrep
@@ -19,7 +19,7 @@ jobs:
           config: p/ci
   go-vet:
     name: Go vet
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: actions/checkout
         uses: actions/checkout@v2
@@ -37,7 +37,7 @@ jobs:
         run: go vet ./...
   static-check:
     name: Static check
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: actions/checkout
         uses: actions/checkout@v2
@@ -53,7 +53,7 @@ jobs:
             ${{ env.GO_CACHE_PREFIX }}-
       - name: install staticcheck
         run: |
-          wget https://github.com/dominikh/go-tools/releases/download/2020.1.6/staticcheck_linux_amd64.tar.gz
+          wget https://github.com/dominikh/go-tools/releases/download/v0.3.3/staticcheck_linux_amd64.tar.gz
           tar -xf staticcheck_linux_amd64.tar.gz
       - name: gofmt
         run: test -z "$(gofmt -s -l . | grep -v vendor/)"
@@ -61,14 +61,14 @@ jobs:
         run: staticcheck/staticcheck
   gitleaks:
     name: Gitleaks
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
       - name: gitleaks-action
         uses: gitleaks/gitleaks-action@v1.6.0
   meta-linters:
     name: Static checks
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     needs:
       - semgrep
       - go-vet
