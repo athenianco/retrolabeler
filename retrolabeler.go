@@ -442,11 +442,6 @@ func ApplyUpdates(updates []Update, token string, workers int, dryRun bool) erro
 			defer wg.Done()
 			client := makeGraphQLClient(token)
 			var mutation struct {
-				RateLimit struct {
-					Cost      int
-					Remaining int
-					ResetAt   githubv4.DateTime
-				}
 				AddLabelsToLabelable struct {
 					ClientMutationID string
 				} `graphql:"addLabelsToLabelable(input: $input)"`
