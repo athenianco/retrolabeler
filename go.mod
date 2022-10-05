@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	github.com/gobwas/glob v0.2.3
-	github.com/rs/zerolog v1.27.0
+	github.com/rs/zerolog v1.28.0
 	github.com/schollz/progressbar/v3 v3.11.0
 	github.com/shurcooL/githubv4 v0.0.0-20220520033151-0b4e3294ff00
 	golang.org/x/oauth2 v0.0.0-20220722155238-128564f6959c
