@@ -25,11 +25,3 @@ require (
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/protobuf v1.28.1 // indirect
 )
-
-replace (
-	golang.org/x/crypto => golang.org/x/crypto v0.0.0-20220926161630-eccd6366d1be
-	golang.org/x/net => golang.org/x/net v0.0.0-20220927171203-f486391704dc
-	golang.org/x/text => golang.org/x/text v0.3.7
-	gopkg.in/yaml.v2 => gopkg.in/yaml.v2 v2.2.8
-	gopkg.in/yaml.v3 => gopkg.in/yaml.v3 v3.0.1
-)
