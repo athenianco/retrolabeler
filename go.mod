@@ -7,7 +7,7 @@ require (
 	github.com/rs/zerolog v1.29.0
 	github.com/schollz/progressbar/v3 v3.11.0
 	github.com/shurcooL/githubv4 v0.0.0-20220520033151-0b4e3294ff00
-	golang.org/x/oauth2 v0.0.0-20220722155238-128564f6959c
+	golang.org/x/oauth2 v0.5.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
