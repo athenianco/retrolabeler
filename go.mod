@@ -7,7 +7,7 @@ require (
 	github.com/rs/zerolog v1.29.0
 	github.com/schollz/progressbar/v3 v3.13.1
 	github.com/shurcooL/githubv4 v0.0.0-20220520033151-0b4e3294ff00
-	golang.org/x/oauth2 v0.5.0
+	golang.org/x/oauth2 v0.7.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -19,9 +19,9 @@ require (
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
 	github.com/rivo/uniseg v0.4.3 // indirect
 	github.com/shurcooL/graphql v0.0.0-20220606043923-3cf50f8a0a29 // indirect
-	golang.org/x/net v0.7.0 // indirect
-	golang.org/x/sys v0.6.0 // indirect
-	golang.org/x/term v0.6.0 // indirect
+	golang.org/x/net v0.9.0 // indirect
+	golang.org/x/sys v0.7.0 // indirect
+	golang.org/x/term v0.7.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/protobuf v1.28.1 // indirect
 )
